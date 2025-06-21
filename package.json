@@ -1,0 +1,25 @@
+{
+  "name": "weweb-realtime-chat",
+  "version": "1.0.0",
+  "description": "Componente de chat em tempo real com Supabase para WeWeb",
+  "main": "ww-config.js",
+  "scripts": {
+    "build": "weweb build",
+    "serve": "weweb serve"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/seu-usuario/weweb-realtime-chat.git"
+  },
+  "keywords": [
+    "weweb",
+    "chat",
+    "realtime",
+    "supabase"
+  ],
+  "author": "Seu Nome",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}
