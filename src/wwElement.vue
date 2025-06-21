@@ -1,77 +1,113 @@
 <template>
-  <div class="chat-wrapper" :style="{ height: content.height || '500px' }">
-    <div class="chat-container">
-      <!-- Lista de mensagens -->
-      <div class="messages-container" ref="messagesContainer">
-        <div 
-          v-for="message in messages" 
-          :key="message.id"
-          :class="['message', { 'own-message': message.user_id === content.currentUserId }]"
-        >
-          <div class="message-header">
+  <!-- Chat Wrapper with customizable height -->
+  <div class="chat-wrapper" :style="{ height: content.height || '550px' }">
+    <!-- Header (optional – you can hide via prop) -->
+    <div class="chat-header" v-if="showHeader">
+      <button class="back-btn" @click="$emit('back')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M15 19l-7-7 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="header-info">
+        <h3>{{ headerTitle }}</h3>
+        <span class="member-count" v-if="memberCount">{{ memberCount }} {{ $t('members') }}</span>
+      </div>
+      <button class="invite-btn" @click="$emit('invite')">+ {{ $t('invite member') }}</button>
+    </div>
+
+    <!-- Messages -->
+    <div class="messages-container" ref="messagesContainer">
+      <div
+        v-for="message in messages"
+        :key="message.id"
+        :class="['message-row', { 'own': message.user_id === currentUserId }]"
+      >
+        <!-- Avatar (left) -->
+        <img
+          v-if="!isOwn(message)"
+          class="avatar"
+          :src="message.avatar_url || defaultAvatar"
+          alt="avatar"
+        />
+
+        <div class="message-bubble-wrapper">
+          <!-- Username + relative time -->
+          <div class="meta">
             <span class="username">{{ message.username }}</span>
-            <span class="timestamp">{{ formatTime(message.created_at) }}</span>
+            <span class="timestamp">{{ formatRelativeTime(message.created_at) }}</span>
           </div>
-          <div class="message-content" v-html="parseMessage(message.content)"></div>
+          <!-- Content -->
+          <div
+            class="message-bubble"
+            :class="{ 'own-bubble': isOwn(message) }"
+            v-html="parseMessage(message.content)"
+          ></div>
+        </div>
+
+        <!-- Avatar (right) for own messages -->
+        <img
+          v-if="isOwn(message)"
+          class="avatar own-avatar"
+          :src="message.avatar_url || defaultAvatar"
+          alt="avatar"
+        />
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div class="input-container">
+      <!-- Mention dropdown -->
+      <div
+        v-if="showMentionMenu"
+        class="mention-menu"
+        :style="mentionMenuStyle"
+      >
+        <div
+          v-for="item in filteredMentionItems"
+          :key="item.id"
+          class="mention-item"
+          @click="selectMention(item)"
+        >
+          <span class="trigger">{{ currentTrigger }}</span>{{ item.label }}
         </div>
       </div>
 
-      <!-- Input de mensagem -->
-      <div class="input-container">
-        <!-- Menu de menções -->
-        <div v-if="showMentionMenu" class="mention-menu" :style="mentionMenuStyle">
-          <div 
-            v-for="item in filteredMentionItems" 
-            :key="item.id"
-            @click="selectMention(item)"
-            class="mention-item"
-          >
-            <span class="mention-trigger">{{ currentTrigger }}</span>
-            {{ item.label }}
-          </div>
-        </div>
-
-        <!-- Campo de input -->
-        <div class="input-wrapper">
-          <div 
-            ref="messageInput"
-            class="message-input"
-            contenteditable="true"
-            @input="handleInput"
-            @keydown="handleKeydown"
-            @paste="handlePaste"
-            placeholder="Digite uma mensagem..."
-          ></div>
-          <button @click="sendMessage" class="send-button" :disabled="!isConnected">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M2 21L23 12L2 3V10L17 12L2 14V21Z" fill="currentColor"/>
-            </svg>
-          </button>
-        </div>
+      <!-- Editable div + send -->
+      <div class="input-wrapper">
+        <div
+          ref="messageInput"
+          class="message-input"
+          contenteditable="true"
+          :placeholder="$t('Type a message…')"
+          @input="handleInput"
+          @keydown="handleKeydown"
+          @paste="handlePaste"
+        ></div>
+        <button class="send-button" :disabled="!canSend" @click="sendMessage">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M2 21L23 12L2 3V10L17 12L2 14V21Z" fill="currentColor" />
+          </svg>
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script>
-// Importar Supabase
 import { createClient } from '@supabase/supabase-js'
+import dayjs from 'dayjs'
+import relativeTime from 'dayjs/plugin/relativeTime'
+
+dayjs.extend(relativeTime)
 
 export default {
   name: 'RealtimeChat',
-  
-  // WeWeb passa as props através de 'content'
   props: {
-    content: {
-      type: Object,
-      default: () => ({})
-    }
+    content: { type: Object, default: () => ({}) }
   },
-  
   data() {
     return {
       messages: [],
-      messageText: '',
       showMentionMenu: false,
       currentTrigger: null,
       mentionSearch: '',
@@ -80,12 +116,12 @@ export default {
       mentionMenuStyle: {},
       supabase: null,
       channel: null,
+      defaultAvatar: 'https://placehold.co/40x40/png',
       isConnected: false
     }
   },
-  
   computed: {
-    // Acessar props através de content
+    // Derived settings from content prop
     supabaseUrl() {
       return this.content.supabaseUrl
     },
@@ -106,597 +142,251 @@ export default {
     },
     mentionTriggers() {
       return this.content.mentionTriggers || {
-        '@': { items: [], className: 'mention-user' },
-        '#': { items: [], className: 'mention-tag' }
+        '@': { items: [], className: 'm-user' },
+        '#': { items: [], className: 'm-tag' }
       }
+    },
+    showHeader() {
+      return this.content.showHeader !== false
+    },
+    headerTitle() {
+      return this.content.headerTitle || 'Direct Chat'
+    },
+    memberCount() {
+      return this.content.memberCount || null
+    },
+    canSend() {
+      return this.isConnected && (this.$refs.messageInput?.innerText.trim().length > 0)
     }
   },
-  
   watch: {
-    // Reconectar se as credenciais mudarem
-    supabaseUrl() {
-      this.reconnect()
-    },
-    supabaseKey() {
-      this.reconnect()
-    },
-    channelId() {
-      this.reconnect()
-    }
+    supabaseUrl() { this.reconnect() },
+    supabaseKey() { this.reconnect() },
+    channelId()   { this.reconnect() }
   },
-  
   mounted() {
-    this.initializeSupabase()
+    this.initSupabase()
   },
-  
   beforeUnmount() {
     this.disconnect()
   },
-  
   methods: {
-    async initializeSupabase() {
-      try {
-        if (!this.supabaseUrl || !this.supabaseKey) {
-          console.warn('Supabase credentials not provided')
-          return
-        }
-        
-        // Criar cliente Supabase
-        this.supabase = createClient(this.supabaseUrl, this.supabaseKey)
-        
-        // Carregar mensagens e inscrever no canal
-        await this.loadMessages()
-        this.subscribeToMessages()
-        
-        this.isConnected = true
-      } catch (error) {
-        console.error('Error initializing Supabase:', error)
-        this.isConnected = false
-      }
+    /* ---------- Supabase ---------- */
+    async initSupabase() {
+      if (!this.supabaseUrl || !this.supabaseKey) return
+      this.supabase = createClient(this.supabaseUrl, this.supabaseKey)
+      await this.loadMessages()
+      this.subscribe()
+      this.isConnected = true
     },
-    
     async loadMessages() {
       if (!this.supabase || !this.channelId) return
-      
-      try {
-        const { data, error } = await this.supabase
-          .from(this.tableName)
-          .select('*')
-          .eq('channel_id', this.channelId)
-          .order('created_at', { ascending: true })
-          
-        if (error) throw error
-        
-        this.messages = data || []
-        this.$nextTick(() => this.scrollToBottom())
-      } catch (error) {
-        console.error('Error loading messages:', error)
-      }
+      const { data, error } = await this.supabase
+        .from(this.tableName)
+        .select('*')
+        .eq('channel_id', this.channelId)
+        .order('created_at', { ascending: true })
+      if (error) console.error(error)
+      this.messages = data || []
+      this.$nextTick(() => this.scrollToBottom())
     },
-    
-    subscribeToMessages() {
+    subscribe() {
       if (!this.supabase || !this.channelId) return
-      
-      // Desinscrever do canal anterior se existir
-      if (this.channel) {
-        this.supabase.removeChannel(this.channel)
-      }
-      
-      // Inscrever no novo canal
+      if (this.channel) this.supabase.removeChannel(this.channel)
       this.channel = this.supabase
         .channel(`messages:${this.channelId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: this.tableName,
-            filter: `channel_id=eq.${this.channelId}`
-          },
-          (payload) => {
-            // Adicionar nova mensagem apenas se não for duplicada
-            if (!this.messages.find(m => m.id === payload.new.id)) {
-              this.messages.push(payload.new)
-              this.$nextTick(() => this.scrollToBottom())
-            }
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: this.tableName,
+          filter: `channel_id=eq.${this.channelId}`
+        }, ({ new: m }) => {
+          if (!this.messages.find(x => x.id === m.id)) {
+            this.messages.push(m)
+            this.$nextTick(() => this.scrollToBottom())
           }
-        )
+        })
         .subscribe()
     },
-    
     async sendMessage() {
-      const content = this.$refs.messageInput.innerText.trim()
-      if (!content || !this.supabase || !this.isConnected) return
-      
+      const raw = this.$refs.messageInput.innerText.trim()
+      if (!raw) return
       const message = {
-        content,
+        content: raw,
         user_id: this.currentUserId,
         username: this.currentUsername,
+        avatar_url: this.content.currentAvatarUrl || '',
         channel_id: this.channelId,
         created_at: new Date().toISOString()
       }
-      
-      try {
-        const { error } = await this.supabase
-          .from(this.tableName)
-          .insert([message])
-          
-        if (error) throw error
-        
-        // Limpar input
-        this.$refs.messageInput.innerText = ''
-        this.messageText = ''
-      } catch (error) {
-        console.error('Error sending message:', error)
-        // Você pode adicionar uma notificação de erro aqui
-      }
+      const { error } = await this.supabase.from(this.tableName).insert([message])
+      if (error) console.error(error)
+      this.$refs.messageInput.innerText = ''
     },
-    
-    handleInput(event) {
-      const text = event.target.innerText
-      this.messageText = text
-      
-      // Detecta menções
-      const caretPos = this.getCaretPosition(event.target)
-      this.checkForMentions(text, caretPos)
+    disconnect() {
+      if (this.channel) this.supabase.removeChannel(this.channel)
+      this.isConnected = false
     },
-    
-    handleKeydown(event) {
+    reconnect() {
+      this.disconnect()
+      this.initSupabase()
+    },
+
+    /* ---------- Helpers ---------- */
+    isOwn(m) { return m.user_id === this.currentUserId },
+    scrollToBottom() {
+      const c = this.$refs.messagesContainer
+      c && (c.scrollTop = c.scrollHeight)
+    },
+    parseMessage(txt) {
+      let html = this.escape(txt)
+      Object.keys(this.mentionTriggers).forEach(t => {
+        const cls = this.mentionTriggers[t].className
+        const rgx = new RegExp(`\\${t}(\\w+)`, 'g')
+        html = html.replace(rgx, `<span class="${cls}">${t}$1</span>`) 
+      })
+      return html.replace(/\n/g, '<br/>')
+    },
+    escape(str) {
+      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
+      return str.replace(/[&<>"']/g, ch => map[ch])
+    },
+    formatRelativeTime(ts) {
+      return dayjs(ts).fromNow()
+    },
+
+    /* ---------- Input / Mentions ---------- */
+    handleInput(e) {
+      const text = e.target.innerText
+      const pos = this.getCaretPos(e.target)
+      this.detectMention(text, pos)
+    },
+    handleKeydown(e) {
       if (this.showMentionMenu) {
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-          event.preventDefault()
-          // TODO: Implementar navegação no menu
-        } else if (event.key === 'Enter') {
-          event.preventDefault()
-          if (this.filteredMentionItems.length > 0) {
-            this.selectMention(this.filteredMentionItems[0])
-          }
-        } else if (event.key === 'Escape') {
-          this.closeMentionMenu()
+        if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(e.key)) e.preventDefault()
+        if (e.key === 'Enter' && this.filteredMentionItems.length) {
+          this.selectMention(this.filteredMentionItems[0])
         }
-      } else if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault()
-        this.sendMessage()
+        if (e.key === 'Escape') this.closeMentionMenu()
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault(); this.sendMessage()
       }
     },
-    
-    handlePaste(event) {
-      event.preventDefault()
-      const text = event.clipboardData.getData('text/plain')
-      document.execCommand('insertText', false, text)
+    handlePaste(e) {
+      e.preventDefault(); const t = e.clipboardData.getData('text/plain'); document.execCommand('insertText', false, t)
     },
-    
-    checkForMentions(text, caretPos) {
+
+    detectMention(text, caret) {
       const triggers = Object.keys(this.mentionTriggers)
-      let foundTrigger = false
-      
-      for (const trigger of triggers) {
-        const lastTriggerIndex = text.lastIndexOf(trigger, caretPos - 1)
-        
-        if (lastTriggerIndex !== -1) {
-          const afterTrigger = text.substring(lastTriggerIndex + 1, caretPos)
-          
-          // Verifica se não há espaço entre o trigger e o texto
-          if (!afterTrigger.includes(' ') && !afterTrigger.includes('\n')) {
-            foundTrigger = true
-            this.currentTrigger = trigger
-            this.mentionSearch = afterTrigger
-            this.mentionStartIndex = lastTriggerIndex
+      let found = false
+      for (const t of triggers) {
+        const idx = text.lastIndexOf(t, caret - 1)
+        if (idx !== -1) {
+          const after = text.substring(idx + 1, caret)
+          if (!after.includes(' ') && !after.includes('\n')) {
+            found = true
+            this.currentTrigger = t
+            this.mentionSearch = after
+            this.mentionStartIndex = idx
             this.updateMentionMenu()
             break
           }
         }
       }
-      
-      if (!foundTrigger) {
-        this.closeMentionMenu()
-      }
+      if (!found) this.closeMentionMenu()
     },
-    
     updateMentionMenu() {
       const items = this.mentionTriggers[this.currentTrigger]?.items || []
-      
-      this.filteredMentionItems = items.filter(item => 
-        item.label.toLowerCase().includes(this.mentionSearch.toLowerCase())
-      )
-      
-      if (this.filteredMentionItems.length > 0) {
+      this.filteredMentionItems = items.filter(i => i.label.toLowerCase().includes(this.mentionSearch.toLowerCase()))
+      if (this.filteredMentionItems.length) {
         this.showMentionMenu = true
-        this.updateMentionMenuPosition()
-      } else {
-        this.closeMentionMenu()
-      }
+        this.$nextTick(() => this.setMentionMenuPos())
+      } else { this.closeMentionMenu() }
     },
-    
-    updateMentionMenuPosition() {
-      // Posiciona o menu de menções próximo ao cursor
-      const input = this.$refs.messageInput
-      if (!input) return
-      
-      const rect = input.getBoundingClientRect()
-      
-      this.mentionMenuStyle = {
-        bottom: `${window.innerHeight - rect.top + 5}px`,
-        left: `${rect.left}px`
-      }
+    setMentionMenuPos() {
+      const el = this.$refs.messageInput; if (!el) return
+      const rect = el.getBoundingClientRect()
+      this.mentionMenuStyle = { top: `${rect.bottom + 6}px`, left: `${rect.left}px` }
     },
-    
     selectMention(item) {
       const input = this.$refs.messageInput
-      const text = input.innerText
-      const beforeMention = text.substring(0, this.mentionStartIndex)
-      const afterMention = text.substring(this.mentionStartIndex + this.mentionSearch.length + 1)
-      
-      const mentionText = `${this.currentTrigger}${item.value} `
-      const newText = beforeMention + mentionText + afterMention
-      
+      const txt = input.innerText
+      const before = txt.substring(0, this.mentionStartIndex)
+      const after = txt.substring(this.mentionStartIndex + this.mentionSearch.length + 1)
+      const mentionTxt = `${this.currentTrigger}${item.value} `
+      const newText = before + mentionTxt + after
       input.innerText = newText
-      this.messageText = newText
-      
-      // Posiciona o cursor após a menção
-      const newCaretPos = beforeMention.length + mentionText.length
-      this.setCaretPosition(input, newCaretPos)
-      
+      this.setCaretPos(input, before.length + mentionTxt.length)
       this.closeMentionMenu()
     },
-    
-    closeMentionMenu() {
-      this.showMentionMenu = false
-      this.currentTrigger = null
-      this.mentionSearch = ''
-      this.mentionStartIndex = -1
+    closeMentionMenu() { this.showMentionMenu = false },
+
+    /* ---------- Caret helpers ---------- */
+    getCaretPos(el) {
+      const sel = window.getSelection(); if (!sel.rangeCount) return 0
+      const range = sel.getRangeAt(0)
+      const pre = range.cloneRange(); pre.selectNodeContents(el); pre.setEnd(range.endContainer, range.endOffset)
+      return pre.toString().length
     },
-    
-    parseMessage(content) {
-      let parsed = this.escapeHtml(content)
-      
-      // Substitui menções por spans estilizados
-      Object.keys(this.mentionTriggers).forEach(trigger => {
-        const regex = new RegExp(`\\${trigger}(\\w+)`, 'g')
-        const className = this.mentionTriggers[trigger].className
-        parsed = parsed.replace(regex, `<span class="${className}">${trigger}$1</span>`)
-      })
-      
-      // Substitui quebras de linha
-      parsed = parsed.replace(/\n/g, '<br>')
-      
-      return parsed
-    },
-    
-    formatTime(timestamp) {
-      const date = new Date(timestamp)
-      return date.toLocaleTimeString('pt-BR', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      })
-    },
-    
-    scrollToBottom() {
-      const container = this.$refs.messagesContainer
-      if (container) {
-        container.scrollTop = container.scrollHeight
-      }
-    },
-    
-    getCaretPosition(element) {
-      const selection = window.getSelection()
-      if (selection.rangeCount === 0) return 0
-      
-      const range = selection.getRangeAt(0)
-      const preCaretRange = range.cloneRange()
-      preCaretRange.selectNodeContents(element)
-      preCaretRange.setEnd(range.endContainer, range.endOffset)
-      
-      return preCaretRange.toString().length
-    },
-    
-    setCaretPosition(element, position) {
-      const range = document.createRange()
-      const selection = window.getSelection()
-      
-      // Verificar se o elemento tem conteúdo
-      if (element.childNodes.length === 0) {
-        element.appendChild(document.createTextNode(''))
-      }
-      
-      range.setStart(element.firstChild, Math.min(position, element.textContent.length))
-      range.collapse(true)
-      
-      selection.removeAllRanges()
-      selection.addRange(range)
-      element.focus()
-    },
-    
-    escapeHtml(text) {
-      const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-      }
-      return text.replace(/[&<>"']/g, m => map[m])
-    },
-    
-    reconnect() {
-      this.disconnect()
-      this.initializeSupabase()
-    },
-    
-    disconnect() {
-      if (this.channel) {
-        this.supabase.removeChannel(this.channel)
-        this.channel = null
-      }
-      this.isConnected = false
+    setCaretPos(el, pos) {
+      const range = document.createRange(); const sel = window.getSelection()
+      if (!el.childNodes.length) el.appendChild(document.createTextNode(''))
+      range.setStart(el.firstChild, Math.min(pos, el.firstChild.length))
+      range.collapse(true); sel.removeAllRanges(); sel.addRange(range); el.focus()
     }
   }
 }
 </script>
 
 <style scoped>
-.chat-wrapper {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
+/* --- Layout --- */
+.chat-wrapper { width: 100%; height: 100%; display: flex; flex-direction: column; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.chat-header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #e5e7eb; background: #fafafa; }
+.back-btn, .invite-btn { background: transparent; border: none; color: #6b7280; font-weight: 500; cursor: pointer; padding: 4px 6px; }
+.invite-btn { margin-left: auto; }
+.header-info h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.member-count { font-size: 12px; color: #9ca3af; }
 
-.chat-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background-color: #f0f2f5;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
+.messages-container { flex: 1; overflow-y: auto; padding: 18px 16px; background: #f9f9f9; }
 
-.messages-container {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  background-color: #e5ddd5;
-  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d4d4d4' fill-opacity='0.2'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-}
+.message-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 16px; }
+.message-row.own { flex-direction: row-reverse; }
 
-.message {
-  max-width: 65%;
-  margin-bottom: 12px;
-  display: flex;
-  flex-direction: column;
-  animation: messageIn 0.3s ease-out;
-}
+.avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.own-avatar { margin-left: 8px; }
 
-@keyframes messageIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+.message-bubble-wrapper { max-width: 74%; display: flex; flex-direction: column; }
+.meta { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 2px; color: #6b7280; }
+.username { font-weight: 600; color: #111827; }
+.timestamp { font-size: 11px; }
 
-.message.own-message {
-  align-self: flex-end;
-  margin-left: auto;
-}
+.message-bubble { padding: 10px 14px; background: #fff; border-radius: 8px; line-height: 1.4; word-wrap: break-word; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.own-bubble { background: #dcfce7; }
 
-.message-header {
-  font-size: 12px;
-  color: #667781;
-  margin-bottom: 2px;
-  display: flex;
-  gap: 8px;
-}
+/* Mentions */
+.m-user { color: #c026d3; font-weight: 600; background: rgba(192,38,211,.1); padding: 0 3px; border-radius: 3px; cursor: pointer; }
+.m-tag  { color: #0ea5e9; font-weight: 600; background: rgba(14,165,233,.1); padding: 0 3px; border-radius: 3px; cursor: pointer; }
 
-.message.own-message .message-header {
-  justify-content: flex-end;
-}
+/* Input */
+.input-container { border-top: 1px solid #e5e7eb; padding: 12px 16px; background: #fafafa; }
+.input-wrapper { display: flex; align-items: flex-end; background: #fff; border: 1px solid #e5e7eb; border-radius: 24px; padding: 6px 10px; gap: 10px; }
+.message-input { flex: 1; min-height: 24px; max-height: 140px; overflow-y: auto; outline: none; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 20px; }
+.message-input:empty:before { content: attr(placeholder); color: #9ca3af; }
+.send-button { width: 36px; height: 36px; border: none; background: #10b981; color: #fff; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: .15s ease; flex-shrink: 0; }
+.send-button:disabled { background: #d1d5db; cursor: not-allowed; }
+.send-button:not(:disabled):hover { background: #059669; transform: scale(1.05); }
 
-.username {
-  font-weight: 600;
-}
+/* Mention menu */
+.mention-menu { position: fixed; max-height: 220px; overflow-y: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,.08); z-index: 2000; }
+.mention-item { padding: 8px 12px; font-size: 14px; cursor: pointer; }
+.mention-item:hover { background: #f3f4f6; }
+.trigger { color: #10b981; margin-right: 2px; font-weight: 600; }
 
-.timestamp {
-  opacity: 0.7;
-}
+/* Scrollbar */
+.messages-container::-webkit-scrollbar { width: 6px; }
+.messages-container::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+.messages-container::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
-.message-content {
-  background-color: white;
-  padding: 8px 12px;
-  border-radius: 8px;
-  box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
-  word-wrap: break-word;
-  position: relative;
-}
-
-.message-content::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  width: 0;
-  height: 0;
-  border-style: solid;
-}
-
-.message:not(.own-message) .message-content::before {
-  left: -8px;
-  border-width: 0 8px 8px 0;
-  border-color: transparent white transparent transparent;
-}
-
-.message.own-message .message-content {
-  background-color: #d9fdd3;
-}
-
-.message.own-message .message-content::before {
-  right: -8px;
-  border-width: 0 0 8px 8px;
-  border-color: transparent transparent transparent #d9fdd3;
-}
-
-.input-container {
-  position: relative;
-  background-color: #f0f2f5;
-  padding: 10px 20px;
-  border-top: 1px solid #e1e4e8;
-}
-
-.input-wrapper {
-  display: flex;
-  align-items: flex-end;
-  background-color: white;
-  border-radius: 24px;
-  padding: 5px 5px 5px 15px;
-  box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
-}
-
-.message-input {
-  flex: 1;
-  min-height: 20px;
-  max-height: 120px;
-  overflow-y: auto;
-  outline: none;
-  padding: 8px 0;
-  line-height: 20px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-.message-input:empty:before {
-  content: attr(placeholder);
-  color: #999;
-  pointer-events: none;
-}
-
-.send-button {
-  width: 40px;
-  height: 40px;
-  border: none;
-  background-color: #00a884;
-  color: white;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  flex-shrink: 0;
-}
-
-.send-button:hover:not(:disabled) {
-  background-color: #008f6f;
-  transform: scale(1.05);
-}
-
-.send-button:disabled {
-  background-color: #ccc;
-  cursor: not-allowed;
-}
-
-.mention-menu {
-  position: fixed;
-  background-color: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  max-height: 200px;
-  overflow-y: auto;
-  z-index: 1000;
-  min-width: 200px;
-}
-
-.mention-item {
-  padding: 8px 16px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  transition: background-color 0.2s;
-}
-
-.mention-item:hover {
-  background-color: #f5f5f5;
-}
-
-.mention-trigger {
-  color: #00a884;
-  font-weight: bold;
-  margin-right: 4px;
-}
-
-/* Estilos para menções no texto */
-.mention-user {
-  color: #06cf9c;
-  font-weight: 500;
-  cursor: pointer;
-  background-color: rgba(6, 207, 156, 0.1);
-  padding: 0 4px;
-  border-radius: 3px;
-}
-
-.mention-tag {
-  color: #1976d2;
-  font-weight: 500;
-  cursor: pointer;
-  background-color: rgba(25, 118, 210, 0.1);
-  padding: 0 4px;
-  border-radius: 3px;
-}
-
-.mention-command {
-  color: #f50057;
-  font-weight: 500;
-  cursor: pointer;
-  background-color: rgba(245, 0, 87, 0.1);
-  padding: 0 4px;
-  border-radius: 3px;
-}
-
-/* Scrollbar customizada */
-.messages-container::-webkit-scrollbar {
-  width: 6px;
-}
-
-.messages-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.messages-container::-webkit-scrollbar-thumb {
-  background: #999;
-  border-radius: 3px;
-}
-
-.messages-container::-webkit-scrollbar-thumb:hover {
-  background: #666;
-}
-
-/* Responsividade */
-@media (max-width: 768px) {
-  .message {
-    max-width: 85%;
-  }
-  
-  .messages-container {
-    padding: 10px;
-  }
-  
-  .input-container {
-    padding: 10px;
-  }
-}
-
-/* Estados de carregamento */
-.chat-container.loading {
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-.chat-container.loading::after {
-  content: 'Conectando...';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 14px;
-  color: #666;
-}
+/* Responsive */
+@media (max-width: 600px) { .message-bubble-wrapper { max-width: 82%; } }
 </style>
